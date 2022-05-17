@@ -13,10 +13,17 @@ typedef struct node{
     struct node *next;
 } node;
 typedef struct queue{
-     int size;
-     node* head;
-     node* tail;
+    int size;
+    node* head;
+    node* tail;
 }queue;
+
+queue* queue1;
+int * threads_waiting;
+pthread_t * threads;
+pthread_mutex_t lock_dequeue;
+pthread_mutex_t lock_enqueue;
+int numOfThreads;
 
 
 int enqueue(queue* q, node* newNode){
@@ -50,12 +57,13 @@ node* dequeue(queue* q){
     }
     return last;
 }
-queue* queue1;
-int * threads_waiting;
-pthread_t * threads;
-pthread_mutex_t lock;
-int numOfThreads;
-
+void fillString(char *dest, char* string){
+    int i = 0;
+    while(string[i]!='\0'){
+        dest[i]=string[i];
+        i++;
+    }
+}
 void init(){
     queue1 = (queue*)malloc(sizeof(queue));
     threads_waiting = calloc(numOfThreads,sizeof (int));
@@ -82,21 +90,33 @@ int is_all_threads_waiting(){
     }
     return -1;
 }
-void handle_dir(char * path){
-    //TODO check permissions and if is searchable than add to queue else print a relevant message
+void handle_dir(char * path,  char *dir_name){
+    if((strcmp(dir_name,".") == 0) || (strcmp(dir_name,"..") == 0)){
+        return;
+    }
+    
+    if(opendir(path)==NULL){
+        printf("Directory %s: Permission denied.\n",path);
+        return;
+    }
+
+    pthread_mutex_lock(&lock_enqueue);
+    node * new_node = malloc(sizeof(node));//Todo free the nodes
+    fillString(new_node -> directory, path);
+    enqueue(queue1,new_node);
 }
 void thread_func(int * index){
     int ind = *index;
 
     while( queue1-> size!=0 || (is_all_threads_waiting() < 0)){//if the queue is not empty and there is at least one thread that is not waiting
         if(queue1 -> size == 0){
-            threads_waiting[ind] = 1;
+            threads_waiting[ind] = 1;//TODO make sure no busy waiting and make a thread queue
             continue;
         }
         threads_waiting[ind] = 0;
-        pthread_mutex_lock(&lock);
+        pthread_mutex_lock(&lock_dequeue);
         node * node1 = dequeue(queue1);
-        pthread_mutex_unlock(&lock);
+        pthread_mutex_unlock(&lock_dequeue);
         char* path = node1 -> directory;
         DIR *dir = opendir(path);
         if(dir == NULL){
@@ -113,7 +133,7 @@ void thread_func(int * index){
             if(status.st_mode & S_IFREG){
                 handle_regular_file(full_path);
             }else if(status.st_mode & S_IFDIR){
-                handle_dir();//TODO check if searchable then first add to queue then handle the head of the queue
+                handle_dir(full_path,curr_dir -> d_name);
             }
         }
 
@@ -133,4 +153,6 @@ int main(int argc, char *argv[]){
         pthread_join(threads[i],NULL);
     }
     finish();
-}
+}//
+// Created by student on 5/17/22.
+//
