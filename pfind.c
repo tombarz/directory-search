@@ -33,9 +33,11 @@ int * threads_waiting;
 pthread_t * threads;
 pthread_mutex_t lock_queue_dir;
 pthread_mutex_t lock_queue_t;
+pthread_mutex_t sleep_lock;
 pthread_cond_t * cond_var_arr;
 int numOfThreads;
 char *serch_term;
+
 
 //directory queue operation
 int enqueue(queue* q, node* newNode){
@@ -85,9 +87,9 @@ int enqueue_t(t_queue* q, t_node* newNode){
     return 0;
 }
 
-t_node* dequeue_t(queue* q){
+t_node* dequeue_t(t_queue* q){
     if(q -> head == NULL){
-        q->size = 0;
+        q -> size = 0;
         perror("the queue is empty");
         return NULL;
     }
@@ -114,17 +116,17 @@ void init(){
         perror("there was a problem with the memory allocation");
         exit(1);
     }
-    
+
     if(thread_queue = (t_queue*)malloc(sizeof(t_queue)) < 0){
         perror("there was a problem with the memory allocation");
         exit(1);
     }
-    
+
     if(threads_waiting = calloc(numOfThreads,sizeof (int)) < 0){
         perror("there was a problem with the memory allocation");
         exit(1);
     }
-    
+
     if(threads = calloc(numOfThreads, sizeof(pthread_t)) < 0){
         perror("there was a problem with the memory allocation");
         exit(1);
@@ -138,6 +140,12 @@ void init(){
         perror('there was a problem with the lock initialization');
         exit(1);
     }
+
+    if(pthread_mutex_init(&sleep_lock,NULL) < 0){
+        perror('there was a problem with the lock initialization');
+        exit(1);
+    }
+
     if(cond_var_arr = calloc(numOfThreads, sizeof(pthread_cond_t)) < 0){
         perror("there was a problem with the memory allocation");
         exit(1);
@@ -157,6 +165,7 @@ void finish(){
     free(threads_waiting);
     free(threads);
     free(thread_queue);
+    free(cond_var_arr);
 }
 int is_all_threads_waiting(){
     int is_waiting = threads[0];
@@ -172,17 +181,17 @@ void handle_dir(char * path,  char *dir_name){
     if((strcmp(dir_name,".") == 0) || (strcmp(dir_name,"..") == 0)){
         return;
     }
-    
+
     if(opendir(path)==NULL){
         printf("Directory %s: Permission denied.\n",path);
         return;
     }
 
     pthread_mutex_lock(&lock_queue_dir);
-    node * new_node = malloc(sizeof(node));//Todo free the nodes
+    node * new_node = malloc(sizeof(node));
     fillString(new_node -> directory, path);
     enqueue(dir_queue, new_node);
-    pthread_mutex_unlock(&lock_queue_dir)
+    pthread_mutex_unlock(&lock_queue_dir);
 }
 void thread_func(int * index){
     int ind = *index;
@@ -190,7 +199,13 @@ void thread_func(int * index){
     while(dir_queue-> size != 0 || (is_all_threads_waiting() < 0)){//if the queue is not empty and there is at least one thread that is not waiting
         if(dir_queue -> size == 0){
             if(threads_waiting[ind] == 0){
-                pthread_mutex_lock(&lock_queue_t);//TODO unlock! fill this!
+                pthread_mutex_lock(&lock_queue_t);
+                t_node *new_node = malloc(sizeof(t_node));//TODO free
+                new_node->thread_ind = ind;
+                enqueue_t(thread_queue, new_node);
+                pthread_mutex_unlock(&lock_queue_t);
+                pthread_mutex_lock(&sleep_lock);
+                pthread_cond_wait(&cond_var_arr[ind],&sleep_lock);
             }
             threads_waiting[ind] = 1;
             continue;
@@ -198,8 +213,9 @@ void thread_func(int * index){
         threads_waiting[ind] = 0;
         pthread_mutex_lock(&lock_queue_dir);
         node * node1 = dequeue(dir_queue);
-        pthread_mutex_unlock(&lock_queue_dir);
         char* path = node1 -> directory;
+        free(node1);
+        pthread_mutex_unlock(&lock_queue_dir);
         DIR *dir = opendir(path);
         if(dir == NULL){
             perror('there was a problem with opening the directory');
@@ -218,7 +234,12 @@ void thread_func(int * index){
                 handle_dir(full_path,curr_dir -> d_name);
             }
         }
-
+        pthread_mutex_lock(&lock_queue_t);
+        if((thread_queue -> size) == 0){
+            t_node  *thread = dequeue_t(thread_queue);
+            pthread_cond_signal(&cond_var_arr[ thread -> thread_ind]);
+            free(thread);
+        }
 
     }
 
@@ -226,10 +247,15 @@ void thread_func(int * index){
 
 }
 int main(int argc, char *argv[]){
+    if(argc != 4){
+        perror('wrong number of arguments');
+        exit(1);
+    }
     numOfThreads = atoi(argv[3]);
     serch_term = argv[2];
     init();
     for (int i = 0; i < argv[3]; i++){
+        pthread_mutex_init(&threads[i],NULL);
         pthread_create(&threads[i],NULL,thread_func,&i);
         pthread_cond_init(&cond_var_arr[i],NULL);
     }
