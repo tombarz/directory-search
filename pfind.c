@@ -34,7 +34,8 @@ pthread_mutex_t lock_queue_dir;
 pthread_mutex_t lock_queue_t;
 pthread_mutex_t sleep_lock;
 pthread_cond_t * cond_var_arr;
-pthread_cond_t  start_sig;
+pthread_cond_t  sig_start_cond;
+int sig_start = 0;
 int numOfThreads;
 char *search_term;
 
@@ -151,7 +152,7 @@ void init(){
         perror("there was a problem with the memory allocation");
         exit(1);
     }
-    if(pthread_cond_init(&start_sig,NULL) != 0){
+    if(pthread_cond_init(&sig_start_cond, NULL) != 0){
         perror("there was a problem with condition variable initialization");
         exit(1);
     }
@@ -161,9 +162,6 @@ void handle_regular_file(char * full_path,char *file_name){
         return;
     }
     printf(strcat(full_path,"\n"));
-    if(dir_queue -> size == 0){
-        return;
-    }
 }
 void finish(){
     free(dir_queue);
@@ -200,7 +198,11 @@ void handle_dir(char * path,  char *dir_name){
 }
 void *thread_func(void * index){
     pthread_mutex_lock(&sleep_lock);
-    pthread_cond_wait(&start_sig,&sleep_lock);
+    while (sig_start != 1){
+        pthread_cond_wait(&sig_start_cond, &sleep_lock);
+
+    }
+
     pthread_mutex_unlock(&sleep_lock);
     int *ptr = (int *) index;
     int ind = *ptr;
@@ -217,10 +219,11 @@ void *thread_func(void * index){
                 enqueue_t(thread_queue, new_node);
                 pthread_mutex_unlock(&lock_queue_t);
                 pthread_mutex_lock(&sleep_lock);
+                while((dir_queue->size == 0)&& (thread_queue -> size != (numOfThreads-1)))
                 pthread_cond_wait(&cond_var_arr[ind],&sleep_lock);
                 pthread_mutex_unlock(&sleep_lock);
                 if(thread_queue->size == (numOfThreads-1)){
-                    pthread_exit(NULL);
+                    return NULL;
                 }
             //}
         }
@@ -256,7 +259,7 @@ void *thread_func(void * index){
             free(full_path);
         }
         pthread_mutex_lock(&lock_queue_t);
-        if((thread_queue -> size) != 0){
+        if(((thread_queue -> size) != 0) && (dir_queue -> size != 0)){
             t_node  *thread = dequeue_t(thread_queue);
             pthread_cond_signal(&cond_var_arr[ thread -> thread_ind]);
             free(thread);
@@ -264,10 +267,13 @@ void *thread_func(void * index){
         pthread_mutex_unlock(&lock_queue_t);
         free(path);
     }
-
-    pthread_exit(NULL);
+    for (int i=0; i < numOfThreads; i++ ){
+        pthread_cond_signal(&cond_var_arr[i]);
+    }
+    return NULL;
 
 }
+
 int main(int argc, char *argv[]){
     if(argc != 4){
         perror('wrong number of arguments');
@@ -287,13 +293,14 @@ int main(int argc, char *argv[]){
 
 
     }
-    pthread_cond_broadcast(&start_sig);
+    sig_start = 1;
+    pthread_cond_broadcast(&sig_start_cond);
 
     for (int i = 0; i < numOfThreads; i++){
         pthread_join(threads[i],NULL);
     }
     free(vars);
     finish();
-}//
+}
 // Created by student on 5/17/22.
 //
