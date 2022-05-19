@@ -205,11 +205,12 @@ void *thread_func(void * index){
     int *ptr = (int *) index;
     int ind = *ptr;
 
-    while(dir_queue-> size != 0 || (is_all_threads_waiting() < 0)){//if the queue is not empty and there is at least one thread that is not waiting
+    while(dir_queue-> size != 0 || (thread_queue-> size != (numOfThreads-1))){//if the queue is not empty and there is at least one thread that is not waiting
         pthread_mutex_lock(&lock_queue_dir);
         if(dir_queue -> size == 0){
             pthread_mutex_unlock(&lock_queue_dir);
-            if(threads_waiting[ind] == 0){
+          //  if(thread_queue -> size != 0 ){
+                threads_waiting[ind] = 1;
                 pthread_mutex_lock(&lock_queue_t);
                 t_node *new_node = malloc(sizeof(t_node));//TODO free
                 new_node->thread_ind = ind;
@@ -217,15 +218,19 @@ void *thread_func(void * index){
                 pthread_mutex_unlock(&lock_queue_t);
                 pthread_mutex_lock(&sleep_lock);
                 pthread_cond_wait(&cond_var_arr[ind],&sleep_lock);
-            }
-            threads_waiting[ind] = 1;
-            continue;
+                pthread_mutex_unlock(&sleep_lock);
+                if(thread_queue->size == (numOfThreads-1)){
+                    pthread_exit(NULL);
+                }
+            //}
         }
         threads_waiting[ind] = 0;
+        if(dir_queue -> size == 0){
+            perror("queue is empty!");
+        }
         node * node1 = dequeue(dir_queue);
-        char* path = calloc(PATH_MAX)
-        strcpy(,node1 -> directory)
-        
+        char* path = calloc(PATH_MAX, sizeof(char));
+        strcpy(path,node1 -> directory);
         free(node1);
         pthread_mutex_unlock(&lock_queue_dir);
         DIR *dir = opendir(path);
@@ -233,11 +238,14 @@ void *thread_func(void * index){
             perror('there was a problem with opening the directory');
         }
         struct dirent *curr_dir;
-        while(curr_dir = readdir(dir) != NULL){
+        while((curr_dir = readdir(dir)) != NULL){
             struct stat status;
-            char* full_path = strcat(path  ,(curr_dir -> d_name));
+            char* full_path = calloc(PATH_MAX, sizeof(char));
+            strcpy(full_path,path);
+            strcpy(full_path,strcat(full_path  ,"/"));
+            strcpy(full_path, strcat(full_path  ,(curr_dir -> d_name)));
             if(stat(full_path,&status) < 0){
-                perror('there was a problem');
+                perror('there was a problem with the file');
                 exit(-1);
             }
             if(status.st_mode & S_IFREG){
@@ -245,18 +253,19 @@ void *thread_func(void * index){
             }else if(status.st_mode & S_IFDIR){
                 handle_dir(full_path,curr_dir -> d_name);
             }
+            free(full_path);
         }
         pthread_mutex_lock(&lock_queue_t);
-        if((thread_queue -> size) == 0){
+        if((thread_queue -> size) != 0){
             t_node  *thread = dequeue_t(thread_queue);
             pthread_cond_signal(&cond_var_arr[ thread -> thread_ind]);
             free(thread);
         }
         pthread_mutex_unlock(&lock_queue_t);
-
+        free(path);
     }
 
-
+    pthread_exit(NULL);
 
 }
 int main(int argc, char *argv[]){
@@ -267,21 +276,23 @@ int main(int argc, char *argv[]){
     numOfThreads = atoi(argv[3]);
     search_term = argv[2];
     init();
+    int * vars = calloc(numOfThreads,sizeof(int));
     node * dir_node = malloc(sizeof(node));
     fillString(dir_node -> directory,argv[1]);
     enqueue(dir_queue,dir_node);
     for (int i = 0; i < numOfThreads; i++){
-        int j;//TODO MAKE AN INT ARRAY
-        j = i;
+        vars[i] = i;
         pthread_cond_init(&cond_var_arr[i],NULL);
-        pthread_create(&threads[j],NULL,thread_func,&j);
+        pthread_create(&threads[vars[i]],NULL,thread_func,&vars[i]);
 
 
     }
     pthread_cond_broadcast(&start_sig);
-    for (int i = 0; i < argv[3]; i++){
+
+    for (int i = 0; i < numOfThreads; i++){
         pthread_join(threads[i],NULL);
     }
+    free(vars);
     finish();
 }//
 // Created by student on 5/17/22.
