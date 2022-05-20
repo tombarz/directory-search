@@ -1,11 +1,12 @@
 #include <limits.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <error.h>
 #include <dirent.h>
 #include <pthread.h>
 #include <sys/stat.h>
 #include <string.h>
+
+
 //structures
 typedef struct node{
     char  directory[PATH_MAX];
@@ -29,7 +30,8 @@ typedef struct thread_queue{
 queue* dir_queue;
 t_queue* thread_queue;
 int * threads_waiting;
-char **paths;
+pthread_mutex_t *lock;
+int counter = 0;
 pthread_t * threads;
 pthread_mutex_t lock_queue_dir;
 pthread_mutex_t lock_queue_t;
@@ -194,23 +196,15 @@ void init(){
         exit(1);
     }
 
-    if((paths = calloc(numOfThreads,sizeof(char*))) == NULL){
-        perror("there was a problem with the memory allocation");
-        exit(1);
-    }
-    for(int i = 0; i < numOfThreads; i++){
-        if((paths[i] = calloc(PATH_MAX, sizeof(char))) == NULL){
-            perror("there was a problem with the memory allocation");
-            exit(1);
-        }
 
-    }
+
 }
 void handle_regular_file(char * full_path,char *file_name){
     if(strstr(file_name, search_term) == NULL){
         return;
     }
-    printf(strcat(full_path,"\n"));
+    printf("%s %c",full_path,'\n');
+    counter++;
 }
 void finish(){
     free(dir_queue);
@@ -247,13 +241,14 @@ void handle_dir(char * path,  char *dir_name){
     pthread_mutex_unlock(&lock_queue_dir);
 }
 void *thread_func(void * index){
-    pthread_mutex_lock(&sleep_lock);
-    pthread_cond_wait(&sig_start_cond,&sleep_lock);
-    pthread_mutex_unlock(&sleep_lock);
 
     int *ptr = (int *) index;
     int ind = *ptr;
 
+    pthread_mutex_lock(&start_lock);
+    pthread_cond_wait(&sig_start_cond,&start_lock);
+    pthread_mutex_unlock(&start_lock);
+    printf(" thread %d started\n",ind);
 
     while(1){
 
@@ -279,9 +274,9 @@ void *thread_func(void * index){
                     perror("there was a problem with the file");
                     exit(-1);
                 }
-                if(status.st_mode & S_IFREG){
+                if(S_ISREG(status.st_mode)){
                     handle_regular_file(full_path,curr_dir->d_name);
-                }else if(status.st_mode & S_IFDIR){
+                }else if(S_ISDIR(status.st_mode)){
                     handle_dir(full_path,curr_dir -> d_name);
                 }
                 free(full_path);
@@ -293,9 +288,9 @@ void *thread_func(void * index){
             t_node *new_node = malloc(sizeof(t_node));
             new_node -> thread_ind = ind;
             enqueue_t(thread_queue, new_node);
+            threads_waiting[ind]=1;
             pthread_cond_signal(&queue_t_empty_cond);
             pthread_mutex_unlock(&lock_queue_t);
-            threads_waiting[ind]=1;
             pthread_mutex_lock(&sleep_lock);
             pthread_cond_wait(&cond_var_arr[ind],&sleep_lock);
             pthread_mutex_unlock(&sleep_lock);
@@ -322,8 +317,10 @@ int main(int argc, char *argv[]){
         pthread_cond_init(&cond_var_arr[i],NULL);
         pthread_create(&threads[vars[i]],NULL,thread_func,&vars[i]);
     }
+
     pthread_cond_broadcast(&sig_start_cond);
     while((is_all_threads_waiting() != 0) || (dir_queue -> size) > 0){
+        pthread_cond_broadcast(&sig_start_cond);
         if(dir_queue -> size != 0){
             if(thread_queue -> size > 0){
                 pthread_mutex_lock(&lock_queue_t);
@@ -340,12 +337,15 @@ int main(int argc, char *argv[]){
 
         } else{
             pthread_mutex_lock(&main_lock);
-            pthread_cond_wait(&main_cond,&main_lock);
+            if (is_all_threads_waiting() != 0){
+                pthread_cond_wait(&queue_t_empty_cond,&main_lock);
+            }
             pthread_mutex_unlock(&main_lock);
-
         }
 
     }
+
+    printf("Done searching, found %d files\n",counter);
 
     free(vars);
     finish();
