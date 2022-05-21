@@ -5,6 +5,7 @@
 #include <pthread.h>
 #include <sys/stat.h>
 #include <string.h>
+#include <unistd.h>
 
 
 //structures
@@ -248,7 +249,6 @@ void *thread_func(void * index){
     pthread_mutex_lock(&start_lock);
     pthread_cond_wait(&sig_start_cond,&start_lock);
     pthread_mutex_unlock(&start_lock);
-    printf(" thread %d started\n",ind);
 
     while(1){
 
@@ -261,7 +261,8 @@ void *thread_func(void * index){
             pthread_mutex_unlock(&lock_queue_dir);
             DIR *dir = opendir(path);
             if(dir == NULL){
-                perror("there was a problem with opening the directory");
+                printf("Directory %s: Permission denied.\n",path);
+                continue;
             }
             struct dirent *curr_dir;
             while((curr_dir = readdir(dir)) != NULL){
@@ -317,7 +318,7 @@ int main(int argc, char *argv[]){
         pthread_cond_init(&cond_var_arr[i],NULL);
         pthread_create(&threads[vars[i]],NULL,thread_func,&vars[i]);
     }
-
+    sleep(1);
     pthread_cond_broadcast(&sig_start_cond);
     while((is_all_threads_waiting() != 0) || (dir_queue -> size) > 0){
         pthread_cond_broadcast(&sig_start_cond);
